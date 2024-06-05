@@ -35,7 +35,6 @@ def is_private(msg, usernames):
     str1 = msg.split(' ')[0]
 
     if str1[0] == '@':
-
         user = str1[1:len(str1)]
         for sock in usernames:
             if usernames[sock] == user:
@@ -119,8 +118,8 @@ def main():
     n_users = 0
     user_connect_time = {}
 
-    #Dictionaries containing buffered messages and message state variable
-    #Key for each is a socket object
+    # Dictionaries containing buffered messages and message state variable
+    # Key for each is a socket object
     msg_buffers = {}
     recv_len = {}
     msg_len = {}
@@ -131,12 +130,10 @@ def main():
 
     while inputs:
 
-        #if 60 seconds are up no username yet, disconnect the client
         users = list(user_connect_time)
         for s in users:
             if (time.time() - user_connect_time[s]) > TIMEOUT:
                 LNP.send(s, '', "EXIT")
-
                 inputs.remove(s)
                 outputs.remove(s)
                 n_users -= 1
@@ -158,7 +155,7 @@ def main():
 
                     LNP.send(connection, '', "ACCEPT")
 
-                    #set up connnection variables
+                    # set up connnection variables
                     inputs.append(connection)
                     outputs.append(connection)
                     n_users += 1
@@ -167,14 +164,13 @@ def main():
                     if args.debug:
                         print("        SERVER: new connection from " + str(client_addr))
 
-                else:  #>100 users
+                else:  # >100 users
                     LNP.send(connection, '', "FULL")
                     connection.close()
 
                     if args.debug:
                         print("        SERVER: connection from " +
                               str(client_addr) + " refused, server full")
-
 
             ###
             ### Processing client msgs
@@ -195,8 +191,9 @@ def main():
                     # Note: for the end-to-end encryption clearly you will print whatever your receive
                     print("        received " + str(msg) + " from " + str(s.getpeername()))
 
-                    #Username exists for this client, this is a message
+                    # Username exists for this client, this is a message
                     if s in usernames:
+                        print("Encrypted message received: ", msg)  # TODO: Debug print statement
                         pvt_user = is_private(msg, usernames)
                         msg = "> " + usernames[s] + ": " + msg
                         if pvt_user:
@@ -204,9 +201,11 @@ def main():
                         else:
                             broadcast_queue(msg, msg_queues, exclude=[s])
 
-                    #no username yet, this message is a username
+                    # no username yet, this message is a username
                     else:
+                        print(f"Checking username: {msg}")  # TODO: Debug print statement
                         username_status = is_username(msg, usernames)
+                        print(f"Username status: {username_status}")  # TODO: Debug print statement
                         LNP.send(s, '', username_status)
 
                         if username_status == "USERNAME-ACCEPT":
@@ -217,10 +216,9 @@ def main():
                             print("        SERVER: " + msg)
                             broadcast_queue(msg, msg_queues)
 
-                        else:  #invalid username
+                        else:  # invalid username
                             user_connect_time[s] = time.time()
                             msg = None
-
 
                 ###
                 ### Closing connection with client
@@ -238,7 +236,7 @@ def main():
                     if s in msg_queues:
                         del msg_queues[s]
 
-                    #load disconnect message into msg_queues
+                    # load disconnect message into msg_queues
                     if s in usernames:
                         for sock in msg_queues:
                             msg_queues[sock].put("User " + usernames[s] + " has left")
@@ -247,14 +245,14 @@ def main():
                     if s in user_connect_time:
                         del user_connect_time[s]
 
-                    #If user sent disconnect message need to send one back
+                    # If user sent disconnect message need to send one back
                     if msg_id == "EXIT":
                         LNP.send(s, '', "EXIT")
 
                     n_users -= 1
                     s.close()
 
-        #Send messages to clients
+        # Send messages to clients
         for s in writable:
 
             if s in msg_queues:
@@ -266,18 +264,15 @@ def main():
                     next_msg = None
 
                 if next_msg:
-                    # if args.debug:
-                    #     print("        sending " + next_msg + " to " + str(s.getpeername()))
                     LNP.send(s, next_msg)
 
-        #Remove exceptional sockets from the server
+        # Remove exceptional sockets from the server
         for s in exceptional:
 
             if args.debug:
                 print("        SERVER: handling exceptional condition for " + str(s.getpeername()))
-
             inputs.remove(s)
-            #if s in outputs:
+            # if s in outputs:
             outputs.remove(s)
             del msg_queues[s]
             del usernames[s]
