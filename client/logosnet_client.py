@@ -4,165 +4,118 @@ import select
 import queue
 import sys
 
-from cryptography.fernet import Fernet
-
 from lib import LNP
+from lib.crypt1 import SHARED_KEY, decrypt_message, encrypt_message
 
 
 def get_args():
-    '''
-    Gets command line arguments.
-    '''
-
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--port",
-        metavar='p',
-        dest='port',
-        help="port number",
-        type=int,
-        default=42069
-    )
-
-    parser.add_argument(
-        "--ip",
-        metavar='i',
-        dest='ip',
-        help="IP address for client",
-        default='127.0.0.1'
-    )
-
+    parser.add_argument("--port", metavar='p', dest='port', help="port number", type=int, default=42069)
+    parser.add_argument("--ip", metavar='i', dest='ip', help="IP address for client", default='127.0.0.1')
     return parser.parse_args()
 
 
-# Main method
+def log_message(message):
+    print(message)
+
+
 def main():
-    '''
-    Uses a select loop to process user and server messages. Forwards user input to the server.
-    '''
 
     args = get_args()
     server_addr = args.ip
     port = args.port
 
     server = socket.socket()
-    server.connect((server_addr, port))
-    key = Fernet.generate_key()
-    fernet = Fernet(key)  # TODO: Create Fernetkey
+    try:
+        server.connect((server_addr, port))
+        log_message(f"Connected to server at {server_addr}:{port}")
+    except Exception as e:
+        log_message(f"Connection failed: {e}")
+        return
+
     msg_buffer = {}
     recv_len = {}
     msg_len = {}
     msg_ids = {}
-    symmetric_keys = {}
+    symmetric_keys = {server: SHARED_KEY}
 
     inputs = [server, sys.stdin]
     outputs = [server]
     message_queue = queue.Queue()
 
-    waiting_accept = True
-    username = ''
-    clr_txt_username = ''  # TODO:  variable to for clear text username
-    username_next = False
+    # Prompt user for username
+    username = input("Enter your username: ")
+    LNP.send(server, username, id="USERNAME-ACCEPT")  # Send the username to the server
+
+    print(f"> {username}: ", end="", flush=True)  # Initial prompt for the user
 
     while server in inputs:
-
         readable, writable, exceptional = select.select(inputs, outputs, inputs)
-
         for s in readable:
-
-            ###
-            ### Process server messages
-            ###
             if s == server:
-
                 code = LNP.recv(s, msg_buffer, recv_len, msg_len, msg_ids)
-
                 if code != "LOADING_MSG":
                     code_id, msg = LNP.get_msg_from_queue(s, msg_buffer, recv_len, msg_len, msg_ids, symmetric_keys)
-
                     if code_id is not None:
                         code = code_id
 
                 if code == "MSG_CMPLT":
+                    if msg:
+                        # Clear the current input line
+                        sys.stdout.write('\r' + ' ' * (len(f"> {username}: ") + len(msg)) + '\r')
 
-                    if username_next:
-                        print("complete")
-                        username_msg = msg
-                        clr_txt_username = username_msg.split(' ')[1]  # TODO: clr_txt_username for username
-                        sys.stdout.write(username_msg + '\n')
-                        sys.stdout.write("> " + clr_txt_username + ": ")
-                        sys.stdout.flush()
-                        username_next = False
-
-                    elif msg:
-                        if clr_txt_username != '':  # TODO: Use clr_txt_username for message
-                            sys.stdout.write('\r' + msg + '\n')
-                            sys.stdout.write("> " + clr_txt_username + ": ")
-
+                        if msg.startswith("> "):
+                            parts = msg.split(": ", 1)
+                            if len(parts) == 2:
+                                sender, encrypted_part = parts
+                                if sender.strip() != f"> {username}":  # Ignore own messages
+                                    try:
+                                        decrypted_content = decrypt_message(encrypted_part.strip())
+                                        display_message = f"{sender}: {decrypted_content}"
+                                        sys.stdout.write(display_message + '\n')
+                                    except Exception:
+                                        sys.stdout.write(f"{msg} (failed to decrypt)\n")
                         else:
-                            sys.stdout.write(msg)
+                            sys.stdout.write(msg + '\n')
 
+                        # Redisplay the prompt
+                        sys.stdout.write(f"> {username}: ")
                         sys.stdout.flush()
 
                 elif code == "ACCEPT":
-                    waiting_accept = False
-                    sys.stdout.write(msg)
+                    sys.stdout.write('\r' + msg + '\n')
+                    sys.stdout.write(f"> {username}: ")
                     sys.stdout.flush()
-
-                elif code == "USERNAME-INVALID" or code == "USERNAME-TAKEN":
-                    sys.stdout.write(msg)
-                    sys.stdout.flush()
-
-                elif code == "USERNAME-ACCEPT":
-                    username_next = True
 
                 elif code == "NO_MSG" or code == "EXIT":
-                    sys.stdout.write(msg + '\n')
-                    sys.stdout.flush()
+                    sys.stdout.write('\r' + msg + '\n')
                     inputs.remove(s)
                     if s in writable:
                         writable.remove(s)
+                    server.close()
 
-            ###
-            ### Process user input
-            ###
             else:
+                msg = sys.stdin.readline().strip()
+                if username and msg:
+                    encrypted_msg = encrypt_message(msg)
+                    message_queue.put(encrypted_msg)
+                    # Display the user's own message
+                    sys.stdout.write('\r' + ' ' * (len(f"> {username}: ") + len(msg)) + '\r')
+                    sys.stdout.write(f"> {username}: {msg}\n")
+                    sys.stdout.write(f"> {username}: ")
+                    sys.stdout.flush()
 
-                msg = sys.stdin.readline()
-
-                if not waiting_accept:
-                    msg = msg.rstrip()
-                    if clr_txt_username == '':  # TODO: If username not set, send as clear text
-                        LNP.send(server, msg)
-                    else:
-                        if msg:
-                            message_queue.put(msg)
-                        if not ((clr_txt_username == '') or (msg == "exit()")):
-                            sys.stdout.write("> " + clr_txt_username + ": ")
-                            sys.stdout.flush()
-
-        ###
-        ### Send messages to server
-        ###
         for s in writable:
-
             try:
                 msg = message_queue.get_nowait()
             except queue.Empty:
                 msg = None
 
             if msg:
-                if msg == "exit()":
-                    outputs.remove(s)
-                    LNP.send(s, '', "EXIT")
-
-                else:
-                    encrypted_msg = fernet.encrypt(msg.encode()).decode()  # TODO: encrypt message
-                    LNP.send(server, encrypted_msg)  # TODO: send encryypted message
+                LNP.send(s, msg)
 
         for s in exceptional:
-            print("Disconnected: Server exception")
+            log_message("Disconnected: Server exception")
             inputs.remove(s)
 
     server.close()
